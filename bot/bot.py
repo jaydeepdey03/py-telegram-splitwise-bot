@@ -395,28 +395,21 @@ Start splitting bills! 💰
                 await update.message.reply_text("No members registered yet! Send any message to register yourself.")
                 return
             
-            # Get all users who have participated in expenses in this group
-            user_ids = set()
-            expenses = db.query(Expense).filter_by(group_id=group.id).all()
+            # Get all members from the group_members relationship
+            members = group.members
             
-            for expense in expenses:
-                for split in expense.splits:
-                    user_ids.add(split.user_id)
-            
-            if not user_ids:
-                await update.message.reply_text("No members registered yet! Send any message to register yourself, then create some expenses.")
+            if not members:
+                await update.message.reply_text("No members registered yet! Send any message to register yourself.")
                 return
             
             message = "👥 *Registered Members in this Group:*\n\n"
             
-            for user_id in user_ids:
-                user = db.query(TelegramUser).get(user_id)
-                if user:
-                    name = user.first_name or user.username
-                    message += f"• @{user.username} ({name})\n"
+            for user in members:
+                name = user.first_name or user.username
+                message += f"• @{user.username} ({name})\n"
             
-            message += f"\n📊 Total: {len(user_ids)} member(s)"
-            message += "\n\n💡 *Tip:* Any user mentioned in an expense must be registered. Ask them to send any message in this group to register!"
+            message += f"\n📊 Total: {len(members)} member(s)"
+            message += "\n\n💡 *Tip:* Any user mentioned in an expense must be a member of this group. Ask them to send any message in this group to register!"
             
             await update.message.reply_text(message, parse_mode='Markdown')
             
@@ -428,6 +421,10 @@ Start splitting bills! 💰
         db = SessionLocal()
         try:
             sender = update.effective_user
+            chat_id = update.effective_chat.id
+            chat_title = update.effective_chat.title or "Private Chat"
+            
+            # Get or create user
             user = db.query(TelegramUser).filter_by(telegram_id=sender.id).first()
             
             if not user:
@@ -439,13 +436,26 @@ Start splitting bills! 💰
                 )
                 db.add(user)
                 db.commit()
-                
+                db.refresh(user)
+            
+            # Get or create group
+            group = db.query(Group).filter_by(telegram_chat_id=chat_id).first()
+            if not group:
+                group = Group(telegram_chat_id=chat_id, name=chat_title)
+                db.add(group)
+                db.commit()
+                db.refresh(group)
+            
+            # Add user to group if not already a member
+            if user not in group.members:
+                group.members.append(user)
+                db.commit()
                 await update.message.reply_text(
-                    f"✅ Welcome @{user.username}! You're now registered and can be mentioned in expenses."
+                    f"✅ Welcome @{user.username}! You're now registered in {group.name} and can be mentioned in expenses."
                 )
             else:
                 await update.message.reply_text(
-                    f"✅ You're already registered as @{user.username}!"
+                    f"✅ You're already registered as @{user.username} in {group.name}!"
                 )
             
         finally:
@@ -455,10 +465,14 @@ Start splitting bills! 💰
         """Handle incoming messages and parse expenses"""
         message_text = update.message.text
         
-        # First, register/update the user in our database
+        # First, register/update the user in our database AND track group membership
         db = SessionLocal()
         try:
             sender = update.effective_user
+            chat_id = update.effective_chat.id
+            chat_title = update.effective_chat.title or "Private Chat"
+            
+            # Get or create user
             user = db.query(TelegramUser).filter_by(telegram_id=sender.id).first()
             
             if not user:
@@ -471,6 +485,7 @@ Start splitting bills! 💰
                 )
                 db.add(user)
                 db.commit()
+                db.refresh(user)
             else:
                 # Update user info if changed
                 updated = False
@@ -485,6 +500,21 @@ Start splitting bills! 💰
                     updated = True
                 if updated:
                     db.commit()
+            
+            # Get or create group
+            group = db.query(Group).filter_by(telegram_chat_id=chat_id).first()
+            if not group:
+                group = Group(telegram_chat_id=chat_id, name=chat_title)
+                db.add(group)
+                db.commit()
+                db.refresh(group)
+            
+            # Add user to group if not already a member
+            if user not in group.members:
+                group.members.append(user)
+                db.commit()
+                logger.info(f"Added user @{user.username} to group {group.name} ({chat_id})")
+                
         finally:
             db.close()
         
@@ -520,7 +550,7 @@ Start splitting bills! 💰
             db.add(group)
             db.commit()
         
-        # Validate participants are in the group
+        # Validate participants are in THIS group
         telegram_users = []
         not_found_users = []
         
@@ -540,6 +570,11 @@ Start splitting bills! 💰
                     )
                     db.add(user)
                     db.commit()
+                    db.refresh(user)
+                    # Add to group if not already a member
+                    if user not in group.members:
+                        group.members.append(user)
+                        db.commit()
                 telegram_users.append(user)
                 continue
             
@@ -547,20 +582,30 @@ Start splitting bills! 💰
             user = db.query(TelegramUser).filter_by(username=username).first()
             
             if user:
-                # Verify user is actually in the chat
+                # CRITICAL: Check if user is a member of THIS group in our database
+                if user not in group.members:
+                    logger.warning(f"User @{username} (ID: {user.telegram_id}) is in DB but not a member of group {group.name} ({chat_id})")
+                    not_found_users.append(username)
+                    continue
+                
+                # Double-check: Verify user is still in the Telegram chat
                 try:
                     member = await update.effective_chat.get_member(user.telegram_id)
                     if member.status in ['left', 'kicked', 'banned']:
+                        logger.warning(f"User @{username} has left/kicked from group {group.name} ({chat_id})")
+                        # Remove from our group membership
+                        group.members.remove(user)
+                        db.commit()
                         not_found_users.append(username)
                         continue
                     telegram_users.append(user)
-                except Exception:
-                    # User not in chat or error fetching
+                except Exception as e:
+                    # User not in this Telegram chat
+                    logger.warning(f"User @{username} not in Telegram chat {chat_id}: {e}")
                     not_found_users.append(username)
+                    continue
             else:
-                # User not in our database, need to find them in the chat
-                # This is a limitation: we can't easily search by username in Telegram API
-                # We'll try common approaches
+                # User not in our database, try to find them in the chat
                 try:
                     # Try to get chat administrators (they're usually in the group)
                     admins = await update.effective_chat.get_administrators()
@@ -568,7 +613,7 @@ Start splitting bills! 💰
                     
                     for admin in admins:
                         if admin.user.username and admin.user.username.lower() == username.lower():
-                            # Found the user!
+                            # Found the user - add them to DB and group
                             user = TelegramUser(
                                 telegram_id=admin.user.id,
                                 username=admin.user.username,
@@ -577,14 +622,20 @@ Start splitting bills! 💰
                             )
                             db.add(user)
                             db.commit()
+                            db.refresh(user)
+                            # Add to group
+                            group.members.append(user)
+                            db.commit()
                             telegram_users.append(user)
                             found = True
+                            logger.info(f"Auto-registered admin @{username} to group {group.name}")
                             break
                     
                     if not found:
                         not_found_users.append(username)
                         
-                except Exception:
+                except Exception as e:
+                    logger.warning(f"Could not find user @{username} in chat admins: {e}")
                     not_found_users.append(username)
         
         # If any users not found, raise error

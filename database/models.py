@@ -1,7 +1,16 @@
-from sqlalchemy import Column, Integer, BigInteger, String, Float, DateTime, ForeignKey, Boolean
+from sqlalchemy import Column, Integer, BigInteger, String, Float, DateTime, ForeignKey, Boolean, Table
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database.database import Base
+
+# Association table for group membership
+group_members = Table(
+    'group_members',
+    Base.metadata,
+    Column('group_id', Integer, ForeignKey('groups.id'), primary_key=True),
+    Column('user_id', Integer, ForeignKey('telegram_users.id'), primary_key=True),
+    Column('joined_at', DateTime(timezone=True), server_default=func.now())
+)
 
 class TelegramUser(Base):
     __tablename__ = "telegram_users"
@@ -15,6 +24,7 @@ class TelegramUser(Base):
     
     # Relationships
     splits = relationship("Split", back_populates="user")
+    groups = relationship("Group", secondary=group_members, back_populates="members")
 
 class Group(Base):
     __tablename__ = "groups"
@@ -26,6 +36,7 @@ class Group(Base):
     
     # Relationships
     expenses = relationship("Expense", back_populates="group")
+    members = relationship("TelegramUser", secondary=group_members, back_populates="groups")
 
 class Expense(Base):
     __tablename__ = "expenses"
