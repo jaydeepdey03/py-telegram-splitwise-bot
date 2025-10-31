@@ -1,7 +1,7 @@
 from sqlalchemy import Column, Integer, BigInteger, String, Float, DateTime, ForeignKey, Boolean
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
-from database import Base
+from database.database import Base
 
 class TelegramUser(Base):
     __tablename__ = "telegram_users"

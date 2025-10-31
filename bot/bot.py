@@ -10,8 +10,8 @@ from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import PromptTemplate
 import logging
 
-from database import SessionLocal, init_db
-from models import Group, TelegramUser, Expense, Split
+from database.database import SessionLocal, init_db
+from database.models import Group, TelegramUser, Expense, Split
 from fastapi_backend import app as fastapi_app
 import uvicorn
 import threading

@@ -5,8 +5,8 @@ from typing import List, Optional
 from pydantic import BaseModel
 from datetime import datetime
 
-from database import get_db
-from models import TelegramUser, Group, Expense, Split
+from database.database import get_db
+from database.models import TelegramUser, Group, Expense, Split
 
 app = FastAPI(title="Bill Split Bot API", version="1.0.0")
 
