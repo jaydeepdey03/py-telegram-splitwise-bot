@@ -1,7 +1,7 @@
 from sqlalchemy import Column, Integer, BigInteger, String, Float, DateTime, ForeignKey, Boolean, Table
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
-from database.database import Base
+from group_database.database import Base
 
 # Association table for group membership
 group_members = Table(

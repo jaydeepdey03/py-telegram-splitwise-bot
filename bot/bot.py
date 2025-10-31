@@ -1,21 +1,26 @@
 import os
+import sys
 import re
-from typing import List, Dict, Optional
+from typing import List, Dict
 from datetime import datetime
+
+# Add parent directory to path so we can import from sibling packages
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from telegram import Update, User
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from pydantic import BaseModel, Field, field_validator
 from langchain_openai import ChatOpenAI
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import PromptTemplate
 import logging
 
-from database.database import SessionLocal, init_db
-from database.models import Group, TelegramUser, Expense, Split
+from group_database.database import SessionLocal, init_db
+from group_database.models import Group, TelegramUser, Expense, Split
 from fastapi_backend import app as fastapi_app
 import uvicorn
 import threading
 
+from expense_types.types import ExpenseData
 # Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -24,27 +29,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Pydantic models for LangChain structured output
-class ExpenseParticipant(BaseModel):
-    username: str = Field(description="Telegram username without @ symbol")
-    paid: Optional[float] = Field(default=None, description="Amount paid by this user, None if not specified")
-    
-class ExpenseData(BaseModel):
-    total_amount: float = Field(description="Total expense amount")
-    participants: List[ExpenseParticipant] = Field(description="List of participants in the expense")
-    description: Optional[str] = Field(default="", description="Description of the expense")
-    is_equal_split: bool = Field(description="True if split equally, False if amounts are specified")
-    
-    @field_validator('participants')
-    def validate_participants(cls, v):
-        if len(v) < 2:
-            raise ValueError("At least 2 participants required")
-        return v
-    
-    @field_validator('total_amount')
-    def validate_amount(cls, v):
-        if v <= 0:
-            raise ValueError("Amount must be positive")
-        return v
+
 
 class BillSplitBot:
     def __init__(self, telegram_token: str, openai_api_key: str):
@@ -58,7 +43,7 @@ class BillSplitBot:
         
         # Keywords to detect expense-related messages
         self.expense_keywords = ['split', 'paid', 'expense', 'bill', 'owes', 'owe']
-        
+    
     def is_expense_message(self, text: str) -> bool:
         """Check if message is likely about expense splitting"""
         text_lower = text.lower()
@@ -89,6 +74,7 @@ Parse the expense:""",
         chain = prompt | self.llm | self.parser
         result = await chain.ainvoke({"message": text})
         return result
+
     
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /start command"""

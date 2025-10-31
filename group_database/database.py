@@ -37,7 +37,7 @@ Base = declarative_base()
 
 def init_db():
     """Initialize database and create all tables"""
-    from database.models import TelegramUser, Group, Expense, Split
+    from group_database.models import TelegramUser, Group, Expense, Split
     Base.metadata.create_all(bind=engine)
     print(f"Database initialized: {DATABASE_URL}")
 
